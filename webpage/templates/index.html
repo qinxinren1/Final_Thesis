@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Music Measure Analyzer</title>
+    <link rel="stylesheet" href="https://unpkg.com/wavesurfer.js@6.6.3/dist/wavesurfer.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Music Measure Analyzer</h1>
+        
+        {% if error %}
+            <div class="alert error">{{ error }}</div>
+        {% endif %}
+        
+        <form method="post" enctype="multipart/form-data">
+            <input type="file" name="file" accept=".mp3,.wav" required>
+            <button type="submit">Analyze</button>
+        </form>
+
+        {% if analysis %}
+            <div class="results">
+                <div class="summary">
+                    <h2>Analysis Results</h2>
+                    <p>Tempo: <strong>{{ analysis.tempo }} BPM</strong></p>
+                    <p>Time Signature: <strong>{{ analysis.time_sig }}</strong></p>
+                    <p>Duration: <strong>{{ analysis.duration }} seconds</strong></p>
+                </div>
+
+                <div id="waveform"></div>
+                
+                <div class="controls">
+                    <button onclick="wavesurfer.play()">▶ Play All</button>
+                    <button onclick="wavesurfer.pause()">⏸ Pause</button>
+                    <button onclick="wavesurfer.stop()">⏹ Stop</button>
+                </div>
+
+                <div class="measures">
+                    <h3>Measures</h3>
+                    <div class="measure-grid">
+                        {% for measure in analysis.measures %}
+                            <div class="measure" 
+                                 data-start="{{ measure.start }}"
+                                 data-end="{{ measure.end }}"
+                                 onclick="playMeasure(this)">
+                                <div class="measure-number">Measure {{ measure.number }}</div>
+                                <div class="measure-time">
+                                    {{ "%.2f"|format(measure.start) }}s - 
+                                    {{ "%.2f"|format(measure.end) }}s
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <script src="https://unpkg.com/wavesurfer.js@6.6.3/dist/wavesurfer.min.js"></script>
+    {% if analysis %}
+        <script>
+            const wavesurfer = WaveSurfer.create({
+                container: '#waveform',
+                waveColor: '#4a90e2',
+                progressColor: '#2d5f8b',
+                cursorColor: '#333',
+                height: 150,
+                normalize: true,
+                responsive: true
+            });
+
+            let activeMeasure = null;
+            let playbackTimer = null;
+
+            wavesurfer.load('{{ analysis.audio_url }}');
+
+            function playMeasure(element) {
+                // Stop current playback
+                wavesurfer.stop();
+                if (playbackTimer) clearTimeout(playbackTimer);
+                
+                // Remove previous active state
+                if (activeMeasure) {
+                    activeMeasure.classList.remove('active');
+                }
+                
+                // Get measure times
+                const start = parseFloat(element.dataset.start);
+                const end = parseFloat(element.dataset.end);
+                
+                // Set active state
+                element.classList.add('active');
+                activeMeasure = element;
+                
+                // Play the measure
+                wavesurfer.play(start);
+                
+                // Set timer to stop at end
+                const duration = (end - start) * 1000;
+                playbackTimer = setTimeout(() => {
+                    wavesurfer.stop();
+                    element.classList.remove('active');
+                }, duration);
+            }
+
+            // Handle manual stops
+            wavesurfer.on('pause', () => {
+                if (activeMeasure) {
+                    activeMeasure.classList.remove('active');
+                }
+                if (playbackTimer) clearTimeout(playbackTimer);
+            });
+        </script>
+    {% endif %}
+</body>
+</html>
+
