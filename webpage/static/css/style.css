@@ -66,6 +66,17 @@ button:hover {
     margin: 20px 0;
     display: flex;
     gap: 10px;
+    align-items: center;
+}
+
+#time-display {
+    margin-left: auto;
+    font-family: monospace;
+    font-size: 1.1em;
+    background: #f0f2f5;
+    padding: 8px 12px;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
 }
 
 .measure-grid {
@@ -80,18 +91,83 @@ button:hover {
     background: #f8f9fa;
     border: 1px solid #dee2e6;
     border-radius: 6px;
-    cursor: pointer;
     transition: all 0.2s;
+    cursor: pointer;
 }
 
 .measure:hover {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     transform: translateY(-2px);
-    box-shadow: 0 3px 6px rgba(0,0,0,0.1);
 }
 
 .measure.active {
     background: #e8f5e9;
     border-color: #4caf50;
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+    transform: translateY(-2px);
+}
+
+.beats-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    height: 40px;
+    margin-top: 10px;
+    padding: 5px;
+    background: #fff;
+    border-radius: 4px;
+    border: 1px solid #e9ecef;
+}
+
+.beat-indicator {
+    width: 12px;
+    height: 35px;
+    background: #4caf50;
+    border-radius: 2px;
+    position: relative;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.beat-indicator:hover {
+    transform: scaleY(1.1);
+    background: #45a049;
+    box-shadow: 0 0 4px rgba(76, 175, 80, 0.3);
+}
+
+.beat-indicator.active {
+    transform: scaleY(1.2);
+    background: #ff4081;
+    box-shadow: 0 0 8px rgba(255, 64, 129, 0.5);
+    animation: pulse 1s infinite;
+}
+
+.beat-indicator.clicked {
+    transform: scaleY(1.3);
+    background: #ff4081;
+    box-shadow: 0 0 12px rgba(255, 64, 129, 0.8);
+}
+
+.beat-strength {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #2196f3;
+    border-radius: 2px;
+    transition: height 0.2s;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(255, 64, 129, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(255, 64, 129, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(255, 64, 129, 0);
+    }
 }
 
 .measure-number {
@@ -103,4 +179,167 @@ button:hover {
 .measure-time {
     font-size: 0.9em;
     color: #636e72;
+}
+
+/* Track separation styles */
+.options {
+    margin: 10px 0;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 4px;
+    border: 1px solid #dee2e6;
+}
+
+.options label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.options input[type="checkbox"] {
+    margin-right: 8px;
+}
+
+#separation-status {
+    margin-top: 20px;
+    padding: 15px;
+    background: #f0f8ff;
+    border-radius: 6px;
+    border: 1px solid #b3e0ff;
+}
+
+#separated-tracks {
+    margin-top: 15px;
+}
+
+.track-player {
+    margin-bottom: 25px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+}
+
+.track-player h5 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #2c3e50;
+    text-transform: capitalize;
+}
+
+.track-waveform {
+    margin: 10px 0;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.track-controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+}
+
+#job-status {
+    font-weight: bold;
+    text-transform: capitalize;
+}
+
+#job-status.completed {
+    color: #28a745;
+}
+
+#job-status.running {
+    color: #007bff;
+}
+
+#job-status.submitted {
+    color: #6c757d;
+}
+
+#job-status.error, #job-status.unknown, #job-status.not_found {
+    color: #dc3545;
+}
+
+/* Status message styles */
+#status-message {
+    margin: 10px 0;
+}
+
+.status-info {
+    padding: 10px;
+    background-color: #e1f5fe;
+    border-left: 4px solid #03a9f4;
+    margin-bottom: 10px;
+}
+
+.status-success {
+    padding: 10px;
+    background-color: #e8f5e9;
+    border-left: 4px solid #4caf50;
+    margin-bottom: 10px;
+}
+
+.status-warning {
+    padding: 10px;
+    background-color: #fff8e1;
+    border-left: 4px solid #ffc107;
+    margin-bottom: 10px;
+}
+
+.status-error {
+    padding: 10px;
+    background-color: #ffebee;
+    border-left: 4px solid #f44336;
+    margin-bottom: 10px;
+}
+
+/* Error details toggle button */
+.error-toggle {
+    margin-left: 10px;
+    padding: 3px 8px;
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    font-size: 0.8em;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.error-toggle:hover {
+    background-color: #e0e0e0;
+}
+
+#error-details {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* Track analysis styles */
+.track-analysis {
+    margin-top: 20px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #dee2e6;
+}
+
+.track-analysis h3 {
+    margin-top: 0;
+    color: #2c3e50;
+    border-bottom: 1px solid #dee2e6;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.track-measures {
+    margin-top: 20px;
+}
+
+.analyze-btn {
+    background-color: #9c27b0;
+    margin-left: 10px;
+}
+
+.analyze-btn:hover {
+    background-color: #7b1fa2;
 }

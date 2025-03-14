@@ -15,6 +15,12 @@
         
         <form method="post" enctype="multipart/form-data">
             <input type="file" name="file" accept=".mp3,.wav" required>
+            <div class="options">
+                <label>
+                    <input type="checkbox" name="separate_tracks" value="true">
+                    Separate tracks using Demucs (GPU processing)
+                </label>
+            </div>
             <button type="submit">Analyze</button>
         </form>
 
@@ -25,14 +31,27 @@
                     <p>Tempo: <strong>{{ analysis.tempo }} BPM</strong></p>
                     <p>Time Signature: <strong>{{ analysis.time_sig }}</strong></p>
                     <p>Duration: <strong>{{ analysis.duration }} seconds</strong></p>
+                    
+                    {% if analysis.separation_job_id %}
+                        <div id="separation-status" data-job-id="{{ analysis.separation_job_id }}">
+                            <h3>Track Separation</h3>
+                            <p>Status: <span id="job-status" class="{{ analysis.separation_status }}">{{ analysis.separation_status }}</span></p>
+                            <div id="status-message"></div>
+                            <div id="separated-tracks" style="display: none;">
+                                <h4>Separated Tracks</h4>
+                                <div id="track-players"></div>
+                            </div>
+                        </div>
+                    {% endif %}
                 </div>
 
                 <div id="waveform"></div>
                 
                 <div class="controls">
-                    <button onclick="wavesurfer.play()">▶ Play All</button>
+                    <button onclick="playAll()">▶ Play All</button>
                     <button onclick="wavesurfer.pause()">⏸ Pause</button>
-                    <button onclick="wavesurfer.stop()">⏹ Stop</button>
+                    <button onclick="stopPlayback()">⏹ Stop</button>
+                    <div id="time-display">0:00 / 0:00</div>
                 </div>
 
                 <div class="measures">
@@ -47,6 +66,19 @@
                                 <div class="measure-time">
                                     {{ "%.2f"|format(measure.start) }}s - 
                                     {{ "%.2f"|format(measure.end) }}s
+                                </div>
+                                <div class="beats-container">
+                                    {% for beat in measure.beats %}
+                                        {% if beat.is_strong %}
+                                        <div class="beat-indicator strong clickable"
+                                             data-time="{{ beat.time }}"
+                                             data-strength="{{ beat.strength }}"
+                                             onclick="handleBeatClick(event, this)"
+                                             title="Beat strength: {{ "%.2f"|format(beat.strength) }}">
+                                            <div class="beat-strength" style="height: {{ beat.strength * 100 }}%"></div>
+                                        </div>
+                                        {% endif %}
+                                    {% endfor %}
                                 </div>
                             </div>
                         {% endfor %}
@@ -71,45 +103,422 @@
 
             let activeMeasure = null;
             let playbackTimer = null;
+            let measures = [];
+            let audioContext = null;
+            let clickSound = null;
+
+            // Initialize audio context and create click sound
+            function initAudio() {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Create a simple click sound
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5 note
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                clickSound = { oscillator, gainNode };
+            }
+
+            // Handle beat click
+            function handleBeatClick(event, beatElement) {
+                event.stopPropagation(); // Prevent measure click event
+                
+                const beatTime = parseFloat(beatElement.dataset.time);
+                
+                // Play just this beat
+                wavesurfer.play(beatTime);
+                wavesurfer.setCurrentTime(beatTime);
+                
+                // Stop after a short duration (0.1 seconds)
+                setTimeout(() => {
+                    wavesurfer.stop();
+                }, 100);
+                
+                // Visual feedback
+                beatElement.classList.add('clicked');
+                setTimeout(() => {
+                    beatElement.classList.remove('clicked');
+                }, 200);
+            }
+
+            // Handle measure click
+            function playMeasure(measureElement) {
+                const startTime = parseFloat(measureElement.dataset.start);
+                const endTime = parseFloat(measureElement.dataset.end);
+                
+                // Play only the segment within this measure
+                wavesurfer.play(startTime);
+                wavesurfer.setCurrentTime(startTime);
+                
+                // Stop at the end of the measure
+                setTimeout(() => {
+                    wavesurfer.stop();
+                }, (endTime - startTime) * 1000);
+                
+                // Visual feedback for the measure
+                measureElement.classList.add('active');
+                setTimeout(() => {
+                    measureElement.classList.remove('active');
+                }, (endTime - startTime) * 1000);
+            }
+
+            // Play the entire audio file
+            function playAll() {
+                wavesurfer.play();
+            }
 
             wavesurfer.load('{{ analysis.audio_url }}');
 
-            function playMeasure(element) {
-                // Stop current playback
-                wavesurfer.stop();
-                if (playbackTimer) clearTimeout(playbackTimer);
+            // Track current time and highlight beats
+            wavesurfer.on('audioprocess', function() {
+                const currentTime = wavesurfer.getCurrentTime();
+                updateTimeDisplay(currentTime);
                 
-                // Remove previous active state
-                if (activeMeasure) {
-                    activeMeasure.classList.remove('active');
-                }
+                // Find and highlight beats that match the current time
+                const allBeats = document.querySelectorAll('.beat-indicator');
+                allBeats.forEach(beat => {
+                    const beatTime = parseFloat(beat.dataset.time);
+                    // Use a small threshold (0.05 seconds) to account for timing differences
+                    if (Math.abs(currentTime - beatTime) < 0.05) {
+                        beat.classList.add('active');
+                    } else {
+                        beat.classList.remove('active');
+                    }
+                });
                 
-                // Get measure times
-                const start = parseFloat(element.dataset.start);
-                const end = parseFloat(element.dataset.end);
-                
-                // Set active state
-                element.classList.add('active');
-                activeMeasure = element;
-                
-                // Play the measure
-                wavesurfer.play(start);
-                
-                // Set timer to stop at end
-                const duration = (end - start) * 1000;
-                playbackTimer = setTimeout(() => {
-                    wavesurfer.stop();
-                    element.classList.remove('active');
-                }, duration);
-            }
+                // Find and highlight the current measure
+                const allMeasures = document.querySelectorAll('.measure');
+                allMeasures.forEach(measure => {
+                    const measureStart = parseFloat(measure.dataset.start);
+                    const measureEnd = parseFloat(measure.dataset.end);
+                    
+                    if (currentTime >= measureStart && currentTime < measureEnd) {
+                        measure.classList.add('active');
+                        activeMeasure = measure;
+                    } else {
+                        measure.classList.remove('active');
+                    }
+                });
+            });
 
             // Handle manual stops
             wavesurfer.on('pause', () => {
                 if (activeMeasure) {
                     activeMeasure.classList.remove('active');
+                    activeMeasure = null;
                 }
-                if (playbackTimer) clearTimeout(playbackTimer);
+                // Remove highlighting from all beats
+                document.querySelectorAll('.beat-indicator').forEach(beat => {
+                    beat.classList.remove('active');
+                });
             });
+
+            wavesurfer.on('finish', () => {
+                if (activeMeasure) {
+                    activeMeasure.classList.remove('active');
+                    activeMeasure = null;
+                }
+                // Remove highlighting from all beats
+                document.querySelectorAll('.beat-indicator').forEach(beat => {
+                    beat.classList.remove('active');
+                });
+            });
+
+            // Format time for display (MM:SS)
+            function formatTime(timeInSeconds) {
+                const minutes = Math.floor(timeInSeconds / 60);
+                const seconds = Math.floor(timeInSeconds % 60);
+                return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }
+
+            // Update time display
+            function updateTimeDisplay(currentTime) {
+                const timeDisplay = document.getElementById('time-display');
+                const duration = wavesurfer.getDuration() || 0;
+                timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
+            }
+
+            // Initialize time display when audio is loaded
+            wavesurfer.on('ready', function() {
+                updateTimeDisplay(0);
+            });
+
+            // Function to handle the Stop button click
+            function stopPlayback() {
+                // Stop any current playback
+                wavesurfer.stop();
+                if (playbackTimer) clearTimeout(playbackTimer);
+                
+                // Clear any active measure
+                if (activeMeasure) {
+                    activeMeasure.classList.remove('active');
+                    activeMeasure = null;
+                }
+            }
+            
+            {% if analysis.separation_job_id %}
+            // Check separation job status
+            const separationStatus = document.getElementById('separation-status');
+            const jobId = separationStatus.dataset.jobId;
+            const statusSpan = document.getElementById('job-status');
+            const statusMessage = document.getElementById('status-message');
+            const separatedTracks = document.getElementById('separated-tracks');
+            const trackPlayers = document.getElementById('track-players');
+            
+            function checkJobStatus() {
+                fetch(`/check_separation/${jobId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        // Update status class and text
+                        statusSpan.textContent = data.status;
+                        statusSpan.className = data.status;
+                        
+                        // Show appropriate message based on status
+                        if (data.status === 'running') {
+                            statusMessage.innerHTML = '<div class="status-info">Track separation is running. This may take a few minutes...</div>';
+                        } else if (data.status === 'pending') {
+                            statusMessage.innerHTML = '<div class="status-info">Job is pending in the DelftBlue queue. Waiting for resources...</div>';
+                        } else if (data.status === 'queued') {
+                            statusMessage.innerHTML = `<div class="status-info">Job is in the DelftBlue queue. ${data.details || ''}</div>`;
+                        } else if (data.status === 'submitted') {
+                            statusMessage.innerHTML = '<div class="status-info">Job submitted to DelftBlue cluster. Waiting for execution...</div>';
+                        } else if (data.status === 'error') {
+                            let errorMsg = '<div class="status-error">An error occurred during track separation. Please try again.';
+                            if (data.error_details) {
+                                errorMsg += '<button onclick="toggleErrorDetails()" class="error-toggle">Show Details</button>';
+                                errorMsg += `<div id="error-details" style="display: none; margin-top: 10px; font-family: monospace; font-size: 0.8em; white-space: pre-wrap; overflow-x: auto; background: #f8f8f8; padding: 10px; border: 1px solid #ddd; border-radius: 4px;">${data.error_details}</div>`;
+                            }
+                            errorMsg += '</div>';
+                            statusMessage.innerHTML = errorMsg;
+                        } else if (data.status === 'unknown') {
+                            statusMessage.innerHTML = `<div class="status-warning">Job status unknown. It may have failed or been cancelled. ${data.details || ''}</div>`;
+                        } else if (data.status === 'not_found') {
+                            statusMessage.innerHTML = '<div class="status-error">Job not found. Please try again.</div>';
+                        }
+                        
+                        if (data.status === 'completed' && data.tracks) {
+                            separatedTracks.style.display = 'block';
+                            statusMessage.innerHTML = '<div class="status-success">Track separation completed successfully!</div>';
+                            
+                            // Create players for each track
+                            Object.entries(data.tracks).forEach(([trackName, trackUrl]) => {
+                                // Check if player already exists
+                                if (!document.getElementById(`player-${trackName}`)) {
+                                    const trackDiv = document.createElement('div');
+                                    trackDiv.className = 'track-player';
+                                    trackDiv.id = `player-${trackName}`;
+                                    trackDiv.innerHTML = `
+                                        <h5>${trackName}</h5>
+                                        <div id="waveform-${trackName}" class="track-waveform"></div>
+                                        <div class="track-controls">
+                                            <button onclick="playTrack('${trackName}')">▶ Play</button>
+                                            <button onclick="pauseTrack('${trackName}')">⏸ Pause</button>
+                                            <button onclick="stopTrack('${trackName}')">⏹ Stop</button>
+                                            <button onclick="analyzeTrack('${trackName}')" class="analyze-btn">Analyze Track</button>
+                                        </div>
+                                    `;
+                                    trackPlayers.appendChild(trackDiv);
+                                    
+                                    // Create wavesurfer instance for this track
+                                    window[`wavesurfer_${trackName}`] = WaveSurfer.create({
+                                        container: `#waveform-${trackName}`,
+                                        waveColor: '#4a90e2',
+                                        progressColor: '#2d5f8b',
+                                        cursorColor: '#333',
+                                        height: 80,
+                                        normalize: true,
+                                        responsive: true
+                                    });
+                                    
+                                    window[`wavesurfer_${trackName}`].load(trackUrl);
+                                }
+                            });
+                            
+                            // Stop checking status
+                            clearInterval(statusInterval);
+                        } else if (data.status === 'error' || data.status === 'unknown') {
+                            // Stop checking on error
+                            clearInterval(statusInterval);
+                        } else {
+                            // Continue checking
+                            console.log("Job status:", data.status);
+                        }
+                    })
+                    .catch(error => {
+                        console.error("Error checking job status:", error);
+                        statusSpan.textContent = "Error checking status";
+                        statusMessage.innerHTML = '<div class="status-error">Failed to check job status. Please refresh the page.</div>';
+                    });
+            }
+            
+            // Check status immediately and then every 5 seconds
+            checkJobStatus();
+            const statusInterval = setInterval(checkJobStatus, 5000);
+            
+            // Functions to control track playback
+            function playTrack(trackName) {
+                window[`wavesurfer_${trackName}`].play();
+            }
+            
+            function pauseTrack(trackName) {
+                window[`wavesurfer_${trackName}`].pause();
+            }
+            
+            function stopTrack(trackName) {
+                window[`wavesurfer_${trackName}`].stop();
+            }
+            
+            // Function to toggle error details visibility
+            function toggleErrorDetails() {
+                const details = document.getElementById('error-details');
+                const button = document.querySelector('.error-toggle');
+                if (details.style.display === 'none') {
+                    details.style.display = 'block';
+                    button.textContent = 'Hide Details';
+                } else {
+                    details.style.display = 'none';
+                    button.textContent = 'Show Details';
+                }
+            }
+            
+            // Function to analyze a specific track
+            function analyzeTrack(trackName) {
+                // Show loading message
+                const statusMsg = document.createElement('div');
+                statusMsg.className = 'status-info';
+                statusMsg.textContent = `Analyzing ${trackName} track...`;
+                statusMsg.id = 'analyze-status';
+                
+                // Replace any existing status message
+                const existingStatus = document.getElementById('analyze-status');
+                if (existingStatus) {
+                    existingStatus.replaceWith(statusMsg);
+                } else {
+                    document.getElementById('status-message').appendChild(statusMsg);
+                }
+                
+                // Make API call to analyze the track
+                fetch(`/analyze_track/${jobId}/${trackName}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            statusMsg.className = 'status-error';
+                            statusMsg.textContent = `Error analyzing track: ${data.error}`;
+                            return;
+                        }
+                        
+                        // Update the status message
+                        statusMsg.className = 'status-success';
+                        statusMsg.textContent = `Analysis of ${trackName} complete!`;
+                        
+                        // Create a new section for the track analysis
+                        const analysisSection = document.createElement('div');
+                        analysisSection.className = 'track-analysis';
+                        analysisSection.innerHTML = `
+                            <h3>Analysis of ${trackName}</h3>
+                            <p>Tempo: <strong>${data.tempo} BPM</strong></p>
+                            <p>Time Signature: <strong>${data.time_sig}</strong></p>
+                            <p>Duration: <strong>${data.duration} seconds</strong></p>
+                            <div id="track-measures-${trackName}" class="track-measures">
+                                <h4>Measures</h4>
+                                <div class="measure-grid">
+                                    ${data.measures.map(measure => `
+                                        <div class="measure" 
+                                             data-start="${measure.start}"
+                                             data-end="${measure.end}"
+                                             onclick="playTrackMeasure('${trackName}', this)">
+                                            <div class="measure-number">Measure ${measure.number}</div>
+                                            <div class="measure-time">
+                                                ${measure.start.toFixed(2)}s - 
+                                                ${measure.end.toFixed(2)}s
+                                            </div>
+                                            <div class="beats-container">
+                                                ${measure.beats.filter(beat => beat.is_strong).map(beat => `
+                                                    <div class="beat-indicator strong clickable"
+                                                         data-time="${beat.time}"
+                                                         data-strength="${beat.strength}"
+                                                         onclick="handleTrackBeatClick(event, '${trackName}', this)"
+                                                         title="Beat strength: ${beat.strength.toFixed(2)}">
+                                                        <div class="beat-strength" style="height: ${beat.strength * 100}%"></div>
+                                                    </div>
+                                                `).join('')}
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `;
+                        
+                        // Add the analysis section to the page
+                        const trackPlayer = document.getElementById(`player-${trackName}`);
+                        
+                        // Remove any existing analysis
+                        const existingAnalysis = document.getElementById(`analysis-${trackName}`);
+                        if (existingAnalysis) {
+                            existingAnalysis.remove();
+                        }
+                        
+                        // Add the new analysis
+                        analysisSection.id = `analysis-${trackName}`;
+                        trackPlayer.after(analysisSection);
+                    })
+                    .catch(error => {
+                        console.error("Error analyzing track:", error);
+                        statusMsg.className = 'status-error';
+                        statusMsg.textContent = `Error analyzing track: ${error.message}`;
+                    });
+            }
+            
+            // Function to play a specific measure of a track
+            function playTrackMeasure(trackName, measureElement) {
+                const startTime = parseFloat(measureElement.dataset.start);
+                const endTime = parseFloat(measureElement.dataset.end);
+                
+                // Play only the segment within this measure
+                window[`wavesurfer_${trackName}`].play(startTime);
+                window[`wavesurfer_${trackName}`].setCurrentTime(startTime);
+                
+                // Stop at the end of the measure
+                setTimeout(() => {
+                    window[`wavesurfer_${trackName}`].stop();
+                }, (endTime - startTime) * 1000);
+                
+                // Visual feedback for the measure
+                measureElement.classList.add('active');
+                setTimeout(() => {
+                    measureElement.classList.remove('active');
+                }, (endTime - startTime) * 1000);
+            }
+            
+            // Function to handle beat click for a track
+            function handleTrackBeatClick(event, trackName, beatElement) {
+                event.stopPropagation(); // Prevent measure click event
+                
+                const beatTime = parseFloat(beatElement.dataset.time);
+                
+                // Play just this beat
+                window[`wavesurfer_${trackName}`].play(beatTime);
+                window[`wavesurfer_${trackName}`].setCurrentTime(beatTime);
+                
+                // Stop after a short duration (0.1 seconds)
+                setTimeout(() => {
+                    window[`wavesurfer_${trackName}`].stop();
+                }, 100);
+                
+                // Visual feedback
+                beatElement.classList.add('clicked');
+                setTimeout(() => {
+                    beatElement.classList.remove('clicked');
+                }, 200);
+            }
+            {% endif %}
         </script>
     {% endif %}
 </body>
