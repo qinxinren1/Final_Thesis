@@ -1,0 +1,39 @@
+Lmod has detected the following error: The following module(s) are unknown:
+"conda"
+
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore-cache load "conda"
+
+Also make sure that all modulefiles written in TCL start with the string
+#%Module
+
+
+
+
+CommandNotFoundError: Your shell has not been properly configured to use 'conda activate'.
+To initialize your shell, run
+
+    $ conda init <SHELL_NAME>
+
+Currently supported shells are:
+  - bash
+  - fish
+  - tcsh
+  - xonsh
+  - zsh
+  - powershell
+
+See 'conda init --help' for more information and options.
+
+IMPORTANT: You may need to close and restart your shell after running 'conda init'.
+
+
+usage: separate_tracks.py [-h] [-o OUTPUT]
+                          [-m {htdemucs_6s,htdemucs_ft,htdemucs,hdemucs_mmi,mdx,mdx_extra}]
+                          [-s SEGMENT] [--overlap OVERLAP] [--shifts SHIFTS]
+                          [--two-stems {vocals,drums,bass,other,guitar,piano}]
+                          [--mp3] [--mp3-bitrate MP3_BITRATE] [--float32]
+                          [--int24] [--clip-mode {rescale,clamp}]
+                          input_file
+separate_tracks.py: error: the following arguments are required: input_file
