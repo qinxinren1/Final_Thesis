@@ -4,6 +4,10 @@
     <title>Music Measure Analyzer</title>
     <link rel="stylesheet" href="https://unpkg.com/wavesurfer.js@6.6.3/dist/wavesurfer.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <!-- Add Tone.js and Soundfont libraries for MIDI playback -->
+    <script src="https://unpkg.com/tone@14.7.77/build/Tone.js"></script>
+    <script src="https://unpkg.com/soundfont-player@0.12.0/dist/soundfont-player.min.js"></script>
+    <script src="https://unpkg.com/@tonejs/midi@2.0.28/build/Midi.js"></script>
 </head>
 <body>
     <div class="container">
@@ -14,7 +18,7 @@
         {% endif %}
         
         <form method="post" enctype="multipart/form-data">
-            <input type="file" name="file" accept=".mp3,.wav" required>
+            <input type="file" name="file" accept=".mp3,.wav,.mid" required>
             <div class="options">
                 <label>
                     <input type="checkbox" name="separate_tracks" value="true">
@@ -32,6 +36,11 @@
                     <p>Time Signature: <strong>{{ analysis.time_sig }}</strong></p>
                     <p>Duration: <strong>{{ analysis.duration }} seconds</strong></p>
                     
+                    {% if analysis.is_midi %}
+                        <p>MIDI Format: <strong>{{ analysis.format }}</strong></p>
+                        <p>Number of Tracks: <strong>{{ analysis.tracks_count }}</strong></p>
+                    {% endif %}
+                    
                     {% if analysis.separation_job_id %}
                         <div id="separation-status" data-job-id="{{ analysis.separation_job_id }}">
                             <h3>Track Separation</h3>
@@ -45,6 +54,7 @@
                     {% endif %}
                 </div>
 
+                {% if not analysis.is_midi %}
                 <div id="waveform"></div>
                 
                 <div class="controls">
@@ -84,6 +94,49 @@
                         {% endfor %}
                     </div>
                 </div>
+                {% endif %}
+                
+                {% if analysis.is_midi %}
+                <div id="midi-player-container">
+                    <h3>MIDI Tracks</h3>
+                    <div id="midi-tracks">
+                        {% for track in analysis.tracks %}
+                        <div class="midi-track">
+                            <!-- Row 1: Track info and controls -->
+                            <div class="midi-track-header">
+                                <div class="midi-track-info">
+                                    <div class="track-title">
+                                        <h4>{{ track.name }}</h4>
+                                        <p>Notes: <strong>{{ track.notes_count }}</strong></p>
+                                    </div>
+                                    <div class="instrument-container">
+                                        {% if track.instruments|length > 0 %}
+                                            {% for instrument in track.instruments %}
+                                            <span class="instrument-tag">{{ instrument.name }}</span>
+                                            {% endfor %}
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div class="midi-track-controls">
+                                    <button onclick="playMidiTrack('{{ track.number }}')" class="play-button">▶ Play Track</button>
+                                    <button onclick="stopMidiTrack('{{ track.number }}')" style="display:none;" id="stop-button-{{ track.number }}" class="stop-button">⏹ Stop</button>
+                                    <span id="midi-status-{{ track.number }}" class="midi-status"></span>
+                                    <span id="midi-time-display-{{ track.number }}" class="midi-time-display">0:00 / 0:00</span>
+                                </div>
+                            </div>
+                            
+                            <!-- Row 2: Piano roll visualization -->
+                            <div class="midi-visualization-container">
+                                <canvas id="midi-piano-roll-{{ track.number }}" height="20" width="100%" class="interactive-piano-roll" data-track-num="{{ track.number }}"></canvas>
+                                <div class="midi-progress-container" data-track-num="{{ track.number }}">
+                                    <div id="midi-progress-bar-{{ track.number }}" class="midi-progress-bar"></div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
             </div>
         {% endif %}
     </div>
@@ -91,6 +144,7 @@
     <script src="https://unpkg.com/wavesurfer.js@6.6.3/dist/wavesurfer.min.js"></script>
     {% if analysis %}
         <script>
+            {% if not analysis.is_midi %}
             const wavesurfer = WaveSurfer.create({
                 container: '#waveform',
                 waveColor: '#4a90e2',
@@ -262,6 +316,396 @@
                     activeMeasure = null;
                 }
             }
+            {% endif %}
+            
+            {% if analysis.is_midi %}
+            // Handle MIDI track playback with Tone.js and Soundfont
+            const midiPlayers = {};
+            const audioContext = new AudioContext();
+
+            // Initialize Tone.js
+            try {
+                Tone.start();
+            } catch (e) {
+                console.error("Error starting Tone.js:", e);
+            }
+
+            // Format time for display (MM:SS)
+            function formatTime(timeInSeconds) {
+                const minutes = Math.floor(timeInSeconds / 60);
+                const seconds = Math.floor(timeInSeconds % 60);
+                return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }
+
+            // Draw piano roll visualization for MIDI track
+            function drawPianoRoll(trackNum, notes) {
+                const canvas = document.getElementById(`midi-piano-roll-${trackNum}`);
+                if (!canvas) return;
+                
+                const ctx = canvas.getContext('2d');
+                const width = canvas.width;
+                const height = canvas.height;
+                
+                // Clear the canvas
+                ctx.clearRect(0, 0, width, height);
+                
+                if (!notes || notes.length === 0) {
+                    ctx.fillStyle = '#f0f0f0';
+                    ctx.fillRect(0, 0, width, height);
+                    ctx.fillStyle = '#999';
+                    ctx.font = '14px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('No note data available', width/2, height/2);
+                    return;
+                }
+                
+                // Find duration of track and note range
+                let maxTime = 0;
+                let minNote = 127;
+                let maxNote = 0;
+                
+                notes.forEach(note => {
+                    const endTime = note.startTime + note.duration;
+                    if (endTime > maxTime) maxTime = endTime;
+                    if (note.note < minNote) minNote = note.note;
+                    if (note.note > maxNote) maxNote = note.note;
+                });
+                
+                // Add some padding to the note range
+                minNote = Math.max(0, minNote - 5);
+                maxNote = Math.min(127, maxNote + 5);
+                const noteRange = maxNote - minNote + 1;
+                
+                // Draw background
+                ctx.fillStyle = '#f8f9fa';
+                ctx.fillRect(0, 0, width, height);
+                
+                // Draw horizontal lines for octaves
+                ctx.strokeStyle = '#e0e0e0';
+                ctx.lineWidth = 1;
+                for (let octave = Math.floor(minNote / 12); octave <= Math.floor(maxNote / 12); octave++) {
+                    const y = height - ((octave * 12 - minNote) / noteRange) * height;
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(width, y);
+                    ctx.stroke();
+                }
+                
+                // Draw notes
+                notes.forEach(note => {
+                    const x = (note.startTime / maxTime) * width;
+                    const noteWidth = (note.duration / maxTime) * width;
+                    const y = height - ((note.note - minNote) / noteRange) * height;
+                    const noteHeight = height / noteRange;
+                    
+                    // Color based on velocity
+                    const intensity = Math.min(1, note.velocity * 1.5);
+                    ctx.fillStyle = `rgba(74, 144, 226, ${intensity})`;
+                    
+                    // Draw rounded rect for the note
+                    const radius = Math.min(4, noteHeight / 2);
+                    ctx.beginPath();
+                    ctx.moveTo(x + radius, y);
+                    ctx.lineTo(x + noteWidth - radius, y);
+                    ctx.quadraticCurveTo(x + noteWidth, y, x + noteWidth, y + radius);
+                    ctx.lineTo(x + noteWidth, y + noteHeight - radius);
+                    ctx.quadraticCurveTo(x + noteWidth, y + noteHeight, x + noteWidth - radius, y + noteHeight);
+                    ctx.lineTo(x + radius, y + noteHeight);
+                    ctx.quadraticCurveTo(x, y + noteHeight, x, y + noteHeight - radius);
+                    ctx.lineTo(x, y + radius);
+                    ctx.quadraticCurveTo(x, y, x + radius, y);
+                    ctx.closePath();
+                    ctx.fill();
+                });
+                
+                // Store track data for progress updates
+                if (!midiPlayers[trackNum]) {
+                    midiPlayers[trackNum] = {};
+                }
+                midiPlayers[trackNum].trackDuration = maxTime;
+                midiPlayers[trackNum].noteData = {
+                    notes,
+                    maxTime,
+                    minNote,
+                    maxNote,
+                    noteRange
+                };
+                
+                // Add click event listener for interactive playback
+                if (!canvas.hasClickListener) {
+                    canvas.addEventListener('click', function(event) {
+                        // Get the click position relative to the canvas
+                        const rect = canvas.getBoundingClientRect();
+                        const x = event.clientX - rect.left;
+                        
+                        // Calculate the time position based on x coordinate
+                        const timePosition = (x / rect.width) * maxTime;
+                        
+                        // If player exists, play from that position
+                        if (midiPlayers[trackNum] && midiPlayers[trackNum].isLoaded) {
+                            playMidiTrackFromPosition(trackNum, timePosition);
+                        } else {
+                            // Load and then play
+                            playMidiTrack(trackNum, timePosition);
+                        }
+                    });
+                    canvas.hasClickListener = true;
+                }
+                
+                // Also add click event listener to the progress container
+                const progressContainer = document.querySelector(`.midi-progress-container[data-track-num="${trackNum}"]`);
+                if (progressContainer && !progressContainer.hasClickListener) {
+                    progressContainer.addEventListener('click', function(event) {
+                        const rect = progressContainer.getBoundingClientRect();
+                        const x = event.clientX - rect.left;
+                        const timePosition = (x / rect.width) * maxTime;
+                        
+                        if (midiPlayers[trackNum] && midiPlayers[trackNum].isLoaded) {
+                            playMidiTrackFromPosition(trackNum, timePosition);
+                        } else {
+                            playMidiTrack(trackNum, timePosition);
+                        }
+                    });
+                    progressContainer.hasClickListener = true;
+                }
+            }
+
+            // Update the progress bar and time display
+            function updateMidiProgress(trackNum, currentTime, duration) {
+                // Update progress bar
+                const progressBar = document.getElementById(`midi-progress-bar-${trackNum}`);
+                if (progressBar) {
+                    const progress = (currentTime / duration) * 100;
+                    progressBar.style.width = `${progress}%`;
+                }
+                
+                // Update time display
+                const timeDisplay = document.getElementById(`midi-time-display-${trackNum}`);
+                if (timeDisplay) {
+                    timeDisplay.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
+                }
+            }
+
+            function playMidiTrack(trackNum, startPosition = 0) {
+                const statusElement = document.getElementById(`midi-status-${trackNum}`);
+                const stopButton = document.getElementById(`stop-button-${trackNum}`);
+                statusElement.textContent = "Loading...";
+                statusElement.className = "midi-status loading";
+                
+                if (midiPlayers[trackNum] && midiPlayers[trackNum].isLoaded) {
+                    // If player exists, play from position
+                    statusElement.textContent = "Playing";
+                    statusElement.className = "midi-status playing";
+                    stopButton.style.display = 'inline-block';
+                    
+                    if (startPosition > 0) {
+                        midiPlayers[trackNum].startFromPosition(startPosition);
+                    } else {
+                        midiPlayers[trackNum].start();
+                    }
+                    return;
+                }
+                
+                // Request the server to extract and serve this track
+                fetch(`/midi_track/{{ analysis.midi_url.split('/')[-1] }}/${trackNum}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.error) {
+                            statusElement.textContent = `Error: ${data.error}`;
+                            statusElement.className = "midi-status error";
+                            return;
+                        }
+                        
+                        // Get track data
+                        const notes = data.notes;
+                        const instrumentName = data.instrument;
+                        
+                        // Draw the piano roll visualization
+                        drawPianoRoll(trackNum, notes);
+                        
+                        // Load instrument with Soundfont player
+                        Soundfont.instrument(audioContext, instrumentName)
+                            .then(instrument => {
+                                // Create player for this track
+                                const player = {
+                                    instrument,
+                                    notes,
+                                    isLoaded: true,
+                                    isPlaying: false,
+                                    noteTimers: [],
+                                    progressInterval: null,
+                                    trackDuration: midiPlayers[trackNum] ? midiPlayers[trackNum].trackDuration : 0,
+                                    startTime: 0,
+                                    
+                                    start: function() {
+                                        this.startFromPosition(0);
+                                    },
+                                    
+                                    startFromPosition: function(startPosition) {
+                                        this.stop(); // Stop any existing playback
+                                        this.isPlaying = true;
+                                        this.startTime = Date.now() - (startPosition * 1000); // Adjust start time to account for position
+                                        
+                                        // Reset the visualization and show the current position
+                                        updateMidiProgress(trackNum, startPosition, this.trackDuration);
+                                        
+                                        // Start progress tracking
+                                        this.progressInterval = setInterval(() => {
+                                            if (this.isPlaying) {
+                                                const currentTime = (Date.now() - this.startTime) / 1000;
+                                                updateMidiProgress(trackNum, currentTime, this.trackDuration);
+                                                
+                                                // Stop progress updates if we've reached the end
+                                                if (currentTime >= this.trackDuration) {
+                                                    clearInterval(this.progressInterval);
+                                                }
+                                            }
+                                        }, 50); // Update every 50ms for smooth animation
+                                        
+                                        // Filter notes that should be played from the start position
+                                        const notesToPlay = this.notes.filter(note => 
+                                            (note.startTime + note.duration) > startPosition
+                                        );
+                                        
+                                        // Play each note at its start time, adjusted for the start position
+                                        notesToPlay.forEach(note => {
+                                            // Calculate adjusted start time
+                                            const adjustedStartTime = Math.max(0, note.startTime - startPosition);
+                                            
+                                            // Map MIDI note number to note name
+                                            const noteName = this.midiNoteToName(note.note);
+                                            
+                                            // Schedule note to play at the right time
+                                            const noteTimer = setTimeout(() => {
+                                                if (this.isPlaying) {
+                                                    // If the note should have started before the start position,
+                                                    // adjust the duration to play only the remaining portion
+                                                    let noteDuration = note.duration;
+                                                    if (note.startTime < startPosition) {
+                                                        noteDuration = note.duration - (startPosition - note.startTime);
+                                                    }
+                                                    
+                                                    this.instrument.play(noteName, audioContext.currentTime, {
+                                                        duration: noteDuration,
+                                                        gain: note.velocity
+                                                    });
+                                                }
+                                            }, adjustedStartTime * 1000);
+                                            
+                                            this.noteTimers.push(noteTimer);
+                                        });
+                                        
+                                        // Calculate end time for the track
+                                        if (notesToPlay.length > 0) {
+                                            const lastNote = notesToPlay.reduce((latest, note) => {
+                                                const endTime = note.startTime + note.duration;
+                                                return endTime > latest ? endTime : latest;
+                                            }, 0);
+                                            
+                                            // Calculate the remaining duration
+                                            const remainingDuration = lastNote - startPosition;
+                                            
+                                            // Set up end callback
+                                            this.noteTimers.push(setTimeout(() => {
+                                                if (this.isPlaying) {
+                                                    this.isPlaying = false;
+                                                    statusElement.textContent = "Stopped";
+                                                    statusElement.className = "midi-status stopped";
+                                                    stopButton.style.display = 'none';
+                                                    clearInterval(this.progressInterval);
+                                                    updateMidiProgress(trackNum, this.trackDuration, this.trackDuration);
+                                                }
+                                            }, remainingDuration * 1000 + 100)); // Small buffer
+                                        }
+                                    },
+                                    
+                                    stop: function() {
+                                        this.isPlaying = false;
+                                        
+                                        // Clear all scheduled notes
+                                        this.noteTimers.forEach(timer => clearTimeout(timer));
+                                        this.noteTimers = [];
+                                        
+                                        // Stop progress tracking
+                                        if (this.progressInterval) {
+                                            clearInterval(this.progressInterval);
+                                            this.progressInterval = null;
+                                        }
+                                        
+                                        // Stop any currently playing notes
+                                        this.instrument.stop();
+                                    },
+                                    
+                                    // Helper to convert MIDI note numbers to note names
+                                    midiNoteToName: function(midiNote) {
+                                        const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+                                        const octave = Math.floor(midiNote / 12) - 1;
+                                        const noteName = noteNames[midiNote % 12];
+                                        return noteName + octave;
+                                    }
+                                };
+                                
+                                // Store the player
+                                midiPlayers[trackNum] = player;
+                                
+                                // Start playback
+                                statusElement.textContent = "Playing";
+                                statusElement.className = "midi-status playing";
+                                stopButton.style.display = 'inline-block';
+                                
+                                if (startPosition > 0) {
+                                    player.startFromPosition(startPosition);
+                                } else {
+                                    player.start();
+                                }
+                            })
+                            .catch(error => {
+                                console.error("Error loading instrument:", error);
+                                statusElement.textContent = `Error loading instrument: ${error.message}`;
+                                statusElement.className = "midi-status error";
+                            });
+                    })
+                    .catch(error => {
+                        console.error("Error playing MIDI track:", error);
+                        statusElement.textContent = `Error: ${error.message}`;
+                        statusElement.className = "midi-status error";
+                    });
+            }
+
+            function stopMidiTrack(trackNum) {
+                if (midiPlayers[trackNum]) {
+                    midiPlayers[trackNum].stop();
+                    const statusElement = document.getElementById(`midi-status-${trackNum}`);
+                    const stopButton = document.getElementById(`stop-button-${trackNum}`);
+                    statusElement.textContent = "Stopped";
+                    statusElement.className = "midi-status stopped";
+                    stopButton.style.display = 'none';
+                }
+            }
+
+            // Function to play from a specific position
+            function playMidiTrackFromPosition(trackNum, startTime) {
+                if (!midiPlayers[trackNum] || !midiPlayers[trackNum].isLoaded) {
+                    console.error("Player not loaded for track", trackNum);
+                    return;
+                }
+                
+                const player = midiPlayers[trackNum];
+                const statusElement = document.getElementById(`midi-status-${trackNum}`);
+                const stopButton = document.getElementById(`stop-button-${trackNum}`);
+                
+                // Stop current playback
+                player.stop();
+                
+                // Update UI
+                statusElement.textContent = "Playing";
+                statusElement.className = "midi-status playing";
+                stopButton.style.display = 'inline-block';
+                
+                // Adjust playback position
+                player.startFromPosition(startTime);
+            }
+            {% endif %}
             
             {% if analysis.separation_job_id %}
             // Check separation job status

@@ -343,3 +343,168 @@ button:hover {
 .analyze-btn:hover {
     background-color: #7b1fa2;
 }
+
+/* MIDI Player Styles */
+#midi-player-container {
+    margin-top: 30px;
+}
+
+#midi-tracks {
+    margin-top: 20px;
+}
+
+.midi-track {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 15px;
+    margin-bottom: 20px;
+    transition: all 0.2s;
+}
+
+.midi-track:hover {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Row 1: Controls and info */
+.midi-track-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.midi-track-info {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.track-title h4 {
+    margin: 0 0 5px 0;
+    color: #333;
+}
+
+.track-title p {
+    margin: 0;
+}
+
+.instrument-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.instrument-tag {
+    display: inline-block;
+    background: #e3f2fd;
+    color: #1565c0;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+}
+
+.midi-track-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.play-button, .stop-button {
+    min-width: 100px;
+}
+
+.midi-status {
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-weight: bold;
+    display: inline-block;
+}
+
+.midi-time-display {
+    font-family: monospace;
+    font-size: 0.9em;
+    color: #666;
+    min-width: 80px;
+    text-align: right;
+    background-color: rgba(240, 242, 245, 0.8);
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.midi-status.loading {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.midi-status.playing {
+    background: #d4edda;
+    color: #155724;
+}
+
+.midi-status.stopped {
+    background: #e2e3e5;
+    color: #383d41;
+}
+
+.midi-status.error {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+/* Row 2: Piano roll visualization */
+.midi-visualization-container {
+    position: relative;
+}
+
+canvas.interactive-piano-roll {
+    width: 100%;
+    display: block;
+    cursor: pointer;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background: #fff;
+}
+
+.interactive-piano-roll:hover {
+    box-shadow: 0 0 5px rgba(74, 144, 226, 0.5);
+}
+
+.midi-progress-container {
+    height: 10px;
+    background-color: #f0f2f5;
+    border-radius: 5px;
+    margin: 5px 0;
+    overflow: hidden;
+    position: relative;
+    cursor: pointer;
+}
+
+.midi-progress-container:hover {
+    background-color: #e0e6ed;
+}
+
+.midi-progress-bar {
+    height: 100%;
+    background-color: #4a90e2;
+    width: 0;
+    transition: width 0.1s ease-in-out;
+    border-radius: 5px;
+}
+
+/* Responsive layout for mobile devices */
+@media (max-width: 768px) {
+    .midi-track-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+    }
+    
+    .midi-track-controls {
+        flex-wrap: wrap;
+        width: 100%;
+    }
+}

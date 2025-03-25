@@ -1,0 +1,1 @@
+{"job_id": "sep_4f704693892544af9c69f06e87578ef9", "status": "submitted", "audio_path": "static/audio/4f704693892544af9c69f06e87578ef9.mp3", "output_dir": "static/separated/sep_4f704693892544af9c69f06e87578ef9", "submit_time": 1742202335.912951, "use_slurm": true, "slurm_job_id": "6006172"}

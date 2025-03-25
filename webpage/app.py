@@ -10,6 +10,7 @@ from madmom.features.tempo import TempoEstimationProcessor
 import librosa
 import tempfile
 import argparse
+import mido  # Import mido for MIDI file handling
 
 # Custom JSON encoder to handle NumPy types
 class NumpyEncoder(json.JSONEncoder):
@@ -29,12 +30,14 @@ app.config.update({
     'UPLOAD_FOLDER': tempfile.gettempdir(),
     'AUDIO_FOLDER': 'static/audio',
     'SEPARATED_FOLDER': 'static/separated',
-    'ALLOWED_EXTENSIONS': {'wav', 'mp3'},
+    'MIDI_FOLDER': 'static/midi',  # Add MIDI folder
+    'ALLOWED_EXTENSIONS': {'wav', 'mp3', 'mid'},  # Add 'mid' as allowed extension
     'MAX_CONTENT_LENGTH': 50 * 1024 * 1024
 })
 
 os.makedirs(app.config['AUDIO_FOLDER'], exist_ok=True)
 os.makedirs(app.config['SEPARATED_FOLDER'], exist_ok=True)
+os.makedirs(app.config['MIDI_FOLDER'], exist_ok=True)  # Create MIDI folder
 
 def analyze_audio(filepath):
     # Process audio with Madmom
@@ -113,6 +116,110 @@ def analyze_audio(filepath):
         'measures': measures,
         'duration': duration,
         'beats': [beat for measure in measures for beat in measure['beats']]  # Flatten beats for overall list
+    }
+
+def analyze_midi(filepath):
+    """Analyze a MIDI file and extract track information"""
+    midi_data = mido.MidiFile(filepath)
+    
+    # Calculate duration in seconds
+    duration = midi_data.length
+    
+    # Extract tempo if available
+    tempo = 120  # Default tempo if not specified
+    for track in midi_data.tracks:
+        for msg in track:
+            if msg.type == 'set_tempo':
+                # Convert microseconds per beat to BPM
+                tempo = int(round(60000000 / msg.tempo))
+                break
+        if tempo != 120:  # Stop if we found a tempo
+            break
+    
+    # Extract time signature if available
+    numerator = 4
+    denominator = 4
+    for track in midi_data.tracks:
+        for msg in track:
+            if msg.type == 'time_signature':
+                numerator = msg.numerator
+                denominator = msg.denominator
+                break
+        if numerator != 4 or denominator != 4:  # Stop if we found a time signature
+            break
+    
+    # Extract tracks information
+    tracks = []
+    for i, track in enumerate(midi_data.tracks):
+        track_info = {
+            'number': i,
+            'name': track.name if hasattr(track, 'name') and track.name else f'Track {i}',
+            'notes_count': sum(1 for msg in track if msg.type == 'note_on'),
+            'program_changes': [msg for msg in track if msg.type == 'program_change'],
+            'instruments': []
+        }
+        
+        # Get unique instruments in the track
+        instruments = set()
+        current_program = 0
+        for msg in track:
+            if msg.type == 'program_change':
+                current_program = msg.program
+            elif msg.type == 'note_on' and msg.velocity > 0:
+                instruments.add(current_program)
+        
+        # Convert instrument numbers to names
+        for program in instruments:
+            # Simple mapping of common MIDI programs to instrument names
+            if 0 <= program <= 7:
+                instrument = "Piano"
+            elif 8 <= program <= 15:
+                instrument = "Chromatic Percussion"
+            elif 16 <= program <= 23:
+                instrument = "Organ"
+            elif 24 <= program <= 31:
+                instrument = "Guitar"
+            elif 32 <= program <= 39:
+                instrument = "Bass"
+            elif 40 <= program <= 47:
+                instrument = "Strings"
+            elif 48 <= program <= 55:
+                instrument = "Ensemble"
+            elif 56 <= program <= 63:
+                instrument = "Brass"
+            elif 64 <= program <= 71:
+                instrument = "Reed"
+            elif 72 <= program <= 79:
+                instrument = "Pipe"
+            elif 80 <= program <= 87:
+                instrument = "Synth Lead"
+            elif 88 <= program <= 95:
+                instrument = "Synth Pad"
+            elif 96 <= program <= 103:
+                instrument = "Synth Effects"
+            elif 104 <= program <= 111:
+                instrument = "Ethnic"
+            elif 112 <= program <= 119:
+                instrument = "Percussive"
+            elif 120 <= program <= 127:
+                instrument = "Sound Effects"
+            else:
+                instrument = "Unknown"
+                
+            track_info['instruments'].append({
+                'program': program,
+                'name': instrument
+            })
+        
+        tracks.append(track_info)
+    
+    return {
+        'format': midi_data.type,
+        'tracks_count': len(midi_data.tracks),
+        'tempo': tempo,
+        'time_sig': f"{numerator}/{denominator}",
+        'duration': round(duration, 2),
+        'tracks': tracks
     }
 
 def submit_separation_job(audio_path, job_id):
@@ -330,6 +437,7 @@ def index():
     error = None
     audio_url = None
     separation_job_id = None
+    is_midi = False
 
     if request.method == 'POST':
         if 'file' not in request.files:
@@ -340,27 +448,42 @@ def index():
                 ext = file.filename.rsplit('.', 1)[1].lower()
                 uid = uuid.uuid4().hex
                 filename = f"{uid}.{ext}"
-                save_path = os.path.join(app.config['AUDIO_FOLDER'], filename)
                 
-                try:
-                    file.save(save_path)
-                    analysis = analyze_audio(save_path)
-                    analysis['audio_url'] = f"/audio/{filename}"
-                    
-                    # Submit separation job if requested
-                    if request.form.get('separate_tracks') == 'true':
-                        separation_job_id = f"sep_{uid}"
-                        job_info = submit_separation_job(save_path, separation_job_id)
-                        analysis['separation_job_id'] = separation_job_id
-                        analysis['separation_status'] = job_info['status']
-                except Exception as e:
-                    error = f"Processing error: {str(e)}"
-                    if os.path.exists(save_path):
-                        os.remove(save_path)
+                if ext == 'mid':
+                    # Handle MIDI file
+                    save_path = os.path.join(app.config['MIDI_FOLDER'], filename)
+                    try:
+                        file.save(save_path)
+                        analysis = analyze_midi(save_path)
+                        analysis['midi_url'] = f"/midi/{filename}"
+                        analysis['is_midi'] = True
+                        is_midi = True
+                    except Exception as e:
+                        error = f"MIDI processing error: {str(e)}"
+                        if os.path.exists(save_path):
+                            os.remove(save_path)
+                else:
+                    # Handle audio file (existing functionality)
+                    save_path = os.path.join(app.config['AUDIO_FOLDER'], filename)
+                    try:
+                        file.save(save_path)
+                        analysis = analyze_audio(save_path)
+                        analysis['audio_url'] = f"/audio/{filename}"
+                        
+                        # Submit separation job if requested
+                        if request.form.get('separate_tracks') == 'true':
+                            separation_job_id = f"sep_{uid}"
+                            job_info = submit_separation_job(save_path, separation_job_id)
+                            analysis['separation_job_id'] = separation_job_id
+                            analysis['separation_status'] = job_info['status']
+                    except Exception as e:
+                        error = f"Processing error: {str(e)}"
+                        if os.path.exists(save_path):
+                            os.remove(save_path)
             else:
                 error = 'Invalid file format'
 
-    return render_template('index.html', analysis=analysis, error=error, separation_job_id=separation_job_id)
+    return render_template('index.html', analysis=analysis, error=error, separation_job_id=separation_job_id, is_midi=is_midi)
 
 @app.route('/audio/<filename>')
 def serve_audio(filename):
@@ -408,6 +531,123 @@ def analyze_track(job_id, track_name):
         return json.dumps(analysis, cls=NumpyEncoder), 200, {'Content-Type': 'application/json'}
     except Exception as e:
         return jsonify({'error': str(e)})
+
+@app.route('/midi/<filename>')
+def serve_midi(filename):
+    return send_from_directory(app.config['MIDI_FOLDER'], filename)
+
+@app.route('/midi_track/<filename>/<int:track_num>')
+def get_midi_track(filename, track_num):
+    """Extract a specific track from a MIDI file and return as a new MIDI file and note data"""
+    filepath = os.path.join(app.config['MIDI_FOLDER'], filename)
+    
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'MIDI file not found'}), 404
+    
+    try:
+        midi_data = mido.MidiFile(filepath)
+        
+        if track_num >= len(midi_data.tracks):
+            return jsonify({'error': 'Track not found'}), 404
+        
+        # Create a new MIDI file with just this track
+        output_midi = mido.MidiFile(type=0)  # Type 0 means single track
+        output_midi.ticks_per_beat = midi_data.ticks_per_beat
+        
+        # Copy the specified track
+        output_midi.tracks.append(midi_data.tracks[track_num])
+        
+        # Save to a temporary file
+        track_uid = uuid.uuid4().hex
+        output_filename = f"{track_uid}_track_{track_num}.mid"
+        output_path = os.path.join(app.config['MIDI_FOLDER'], output_filename)
+        output_midi.save(output_path)
+        
+        # Extract note data for browser playback
+        # This is a simplified representation of MIDI notes
+        notes = []
+        current_time = 0
+        tempo = 500000  # Default tempo (microseconds per beat)
+        ticks_per_beat = midi_data.ticks_per_beat
+        
+        # Look for common instrument
+        instrument = "acoustic_grand_piano"  # Default instrument
+        for msg in midi_data.tracks[track_num]:
+            if msg.type == 'program_change':
+                # Map program number to general MIDI instrument name
+                program = msg.program
+                if 0 <= program <= 7:
+                    instrument = "acoustic_grand_piano"
+                elif 8 <= program <= 15:
+                    instrument = "glockenspiel"
+                elif 16 <= program <= 23:
+                    instrument = "church_organ"
+                elif 24 <= program <= 31:
+                    instrument = "acoustic_guitar_nylon"
+                elif 32 <= program <= 39:
+                    instrument = "acoustic_bass"
+                elif 40 <= program <= 47:
+                    instrument = "violin"
+                elif 48 <= program <= 55:
+                    instrument = "string_ensemble_1"
+                elif 56 <= program <= 63:
+                    instrument = "trumpet"
+                elif 64 <= program <= 71:
+                    instrument = "alto_sax"
+                elif 72 <= program <= 79:
+                    instrument = "flute"
+                elif 80 <= program <= 87:
+                    instrument = "lead_1_square"
+                elif 88 <= program <= 95:
+                    instrument = "pad_2_warm"
+                elif 96 <= program <= 103:
+                    instrument = "fx_1_rain"
+                elif 104 <= program <= 111:
+                    instrument = "sitar"
+                elif 112 <= program <= 119:
+                    instrument = "woodblock"
+                elif 120 <= program <= 127:
+                    instrument = "bird_tweet"
+                break
+        
+        # Track note on/offs to pair them
+        active_notes = {}
+        
+        for msg in midi_data.tracks[track_num]:
+            if not msg.is_meta:
+                current_time += msg.time
+                
+                # Handle tempo changes
+                if msg.type == 'set_tempo':
+                    tempo = msg.tempo
+                
+                # Track note on/off events
+                elif msg.type == 'note_on' and msg.velocity > 0:
+                    # Note start
+                    seconds = mido.tick2second(current_time, ticks_per_beat, tempo)
+                    active_notes[msg.note] = {
+                        'note': msg.note,
+                        'startTime': seconds,
+                        'velocity': msg.velocity / 127.0
+                    }
+                    
+                elif (msg.type == 'note_off') or (msg.type == 'note_on' and msg.velocity == 0):
+                    # Note end - find matching note_on and calculate duration
+                    if msg.note in active_notes:
+                        seconds = mido.tick2second(current_time, ticks_per_beat, tempo)
+                        note_data = active_notes[msg.note]
+                        note_data['duration'] = seconds - note_data['startTime']
+                        notes.append(note_data)
+                        del active_notes[msg.note]
+        
+        return jsonify({
+            'track_num': track_num,
+            'track_url': f"/midi/{output_filename}",
+            'notes': notes,
+            'instrument': instrument
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run the Flask music analysis web application')
